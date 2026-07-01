@@ -35,7 +35,7 @@
         "nodemon": "^3.0.1"
     },
     "engines": {
-        "node": "20.x"
+        "node": "22.x"
     },
     "nodemonConfig": {
         "ignore": [
