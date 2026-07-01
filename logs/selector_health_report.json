@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-06-16T13:58:22.799Z",
+  "report": {
+    "card": {
+      "anyMatch": true,
+      "matches": [
+        {
+          "selector": ".Nv2PK",
+          "count": 5
+        },
+        {
+          "selector": "div[role=\"article\"]",
+          "count": 5
+        },
+        {
+          "selector": "div[jsaction*=\"mouseover:pane\"]",
+          "count": 9
+        },
+        {
+          "selector": "div[jsaction*=\"pane.place\"]",
+          "count": 0
+        }
+      ]
+    },
+    "name": {
+      "anyMatch": true,
+      "matches": [
+        {
+          "selector": ".qBF1Pd.fontHeadlineSmall",
+          "count": 5
+        },
+        {
+          "selector": ".qBF1Pd",
+          "count": 5
+        },
+        {
+          "selector": ".fontHeadlineSmall",
+          "count": 5
+        },
+        {
+          "selector": "[role=\"heading\"]",
+          "count": 0
+        },
+        {
+          "selector": "h1",
+          "count": 2
+        }
+      ]
+    },
+    "rating": {
+      "anyMatch": true,
+      "matches": [
+        {
+          "selector": ".MW4etd",
+          "count": 5
+        },
+        {
+          "selector": "span[aria-label*=\"stars\"]",
+          "count": 5
+        },
+        {
+          "selector": "span[aria-label*=\"star\"]",
+          "count": 5
+        },
+        {
+          "selector": ".fontBodyMedium span[aria-hidden=\"true\"]",
+          "count": 13
+        }
+      ]
+    },
+    "span": {
+      "anyMatch": true,
+      "matches": [
+        {
+          "selector": "span",
+          "count": 123
+        }
+      ]
+    },
+    "link": {
+      "anyMatch": true,
+      "matches": [
+        {
+          "selector": "a",
+          "count": 5
+        }
+      ]
+    }
+  }
+}
