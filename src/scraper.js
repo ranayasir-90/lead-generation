@@ -218,13 +218,14 @@ class BusinessScraper {
             const websiteLinks = card.querySelectorAll('a');
             for (const link of websiteLinks) {
               const href = link.href;
-              const text = link.textContent.trim();
+              if (!href) continue;
 
-              if (href && href.includes('google.com/maps')) {
+              if (href.includes('google.com/maps') || href.includes('maps.google.com')) {
                 referenceLink = href;
+                continue;
               }
 
-              const hrefLower = href ? href.toLowerCase() : '';
+              const hrefLower = href.toLowerCase();
               const isSocialMedia = hrefLower.includes('facebook.com') ||
                 hrefLower.includes('instagram.com') ||
                 hrefLower.includes('twitter.com') ||
@@ -237,13 +238,36 @@ class BusinessScraper {
                 hrefLower.includes('fb.com') ||
                 hrefLower.includes('t.co');
 
-              if (href &&
-                !href.includes('google.com/maps') &&
-                !href.includes('maps.google.com') &&
-                !isSocialMedia &&
-                (href.includes('.com') || href.includes('.edu') || href.includes('.org') || href.includes('.pk') || href.includes('.net')) &&
-                (text.includes('Website') || text.includes('www') || text.length > 0)) {
-                website = href;
+              if (isSocialMedia) continue;
+
+              // Check if it's a Google redirect link and clean it
+              let targetUrl = href;
+              if (hrefLower.includes('google.com/url')) {
+                try {
+                  const urlParams = new URLSearchParams(href.split('?')[1]);
+                  targetUrl = urlParams.get('q') || href;
+                } catch (e) {
+                  // ignore
+                }
+              }
+
+              const targetUrlLower = targetUrl.toLowerCase();
+              const hasDomainExtension = targetUrlLower.includes('.com') ||
+                targetUrlLower.includes('.net') ||
+                targetUrlLower.includes('.org') ||
+                targetUrlLower.includes('.edu') ||
+                targetUrlLower.includes('.gov') ||
+                targetUrlLower.includes('.pk') ||
+                targetUrlLower.includes('.co') ||
+                targetUrlLower.includes('.biz') ||
+                targetUrlLower.includes('.info') ||
+                targetUrlLower.includes('.io') ||
+                targetUrlLower.includes('.ai') ||
+                targetUrlLower.includes('.me') ||
+                targetUrlLower.includes('.app');
+
+              if (targetUrl && targetUrl.startsWith('http') && hasDomainExtension) {
+                website = targetUrl;
               }
             }
 
