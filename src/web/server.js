@@ -401,6 +401,16 @@ app.post('/api/campaigns', async (req, res) => {
 
         const campaignId = `campaign_${name.replace(/\s+/g, '_')}_${Date.now()}`;
         
+        // Ensure location is appended to the search query if not already present
+        let finalSearchQuery = searchQuery;
+        if (location) {
+            const locParts = location.split(',').map(part => part.trim().toLowerCase()).filter(Boolean);
+            const containsLoc = locParts.some(part => searchQuery.toLowerCase().includes(part));
+            if (!containsLoc) {
+                finalSearchQuery = `${searchQuery} ${location}`;
+            }
+        }
+        
         // Store campaign in active campaigns
         activeCampaigns.set(campaignId, {
             id: campaignId,
@@ -408,7 +418,7 @@ app.post('/api/campaigns', async (req, res) => {
             type: 'lead_generation',
             industry: industry || 'professional',
             location,
-            searchQuery,
+            searchQuery: finalSearchQuery,
             maxResults: parseInt(maxResults) || 20,
             yourService: yourService || '',
             contentStyle: contentStyle || 'balanced',
