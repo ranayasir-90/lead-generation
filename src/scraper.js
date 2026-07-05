@@ -361,6 +361,11 @@ class BusinessScraper {
       const finalLeads = uniqueNewLeads.slice(0, maxResults);
       console.log(`Successfully filtered down to ${finalLeads.length} unique new leads.`);
 
+      // Phase 2: Click each card to extract website from detail panel
+      if (finalLeads.length > 0) {
+        await this.enrichLeadsWithWebsites(page, finalLeads);
+      }
+
       this.results = [...this.results, ...finalLeads];
 
       await page.close();
@@ -462,6 +467,175 @@ class BusinessScraper {
     } catch (error) {
       console.log("Scroll completed with minor issues:", error.message);
     }
+  }
+
+  /**
+   * Clicks each business card to open its detail panel and extract the website URL.
+   * Google Maps only shows website links in the detail view, not in list cards.
+   */
+  async enrichLeadsWithWebsites(page, leads) {
+    console.log(`\n🌐 Enriching ${leads.length} leads with website data from detail panels...`);
+
+    let enrichedCount = 0;
+    let alreadyHadWebsite = 0;
+
+    for (let i = 0; i < leads.length; i++) {
+      const lead = leads[i];
+
+      // Skip if lead already has a valid website
+      if (lead.website && lead.website.trim() !== '' && lead.website !== 'N/A') {
+        alreadyHadWebsite++;
+        enrichedCount++;
+        continue;
+      }
+
+      try {
+        console.log(`  🔍 [${i + 1}/${leads.length}] Clicking "${lead.name}" for website...`);
+
+        // Find the matching card by name and click it
+        const clicked = await page.evaluate((targetName, cardSelectors) => {
+          const cards = [];
+          const seen = new Set();
+          for (const selector of cardSelectors) {
+            document.querySelectorAll(selector).forEach(card => {
+              if (!seen.has(card)) {
+                seen.add(card);
+                cards.push(card);
+              }
+            });
+          }
+
+          for (const card of cards) {
+            const nameEl = card.querySelector(
+              '.qBF1Pd.fontHeadlineSmall, .qBF1Pd, .fontHeadlineSmall, [role="heading"]'
+            );
+            const ariaLabel =
+              card.querySelector('a[aria-label]')?.getAttribute('aria-label') || '';
+            const cardName = nameEl ? nameEl.textContent.trim() : ariaLabel.trim();
+
+            if (cardName === targetName) {
+              const clickable =
+                card.querySelector('a[href*="/maps/place/"]') || nameEl || card;
+              clickable.click();
+              return true;
+            }
+          }
+          return false;
+        }, lead.name, GOOGLE_MAPS_CARD_SELECTORS);
+
+        if (!clicked) {
+          console.log(`    ⚠️  Card not found, skipping`);
+          continue;
+        }
+
+        // Wait for detail panel to load
+        await this.delay(3000);
+
+        // Extract website (and phone) from the detail panel
+        const details = await page.evaluate(() => {
+          let website = '';
+          let phone = '';
+
+          // --- Website ---
+          // Primary: data-item-id="authority" is Google's internal attribute for website links
+          const authorityEl = document.querySelector('a[data-item-id="authority"]');
+          if (authorityEl) {
+            let href = authorityEl.href || '';
+            // Unwrap Google redirect URLs
+            if (href.includes('google.com/url')) {
+              try {
+                const params = new URLSearchParams(href.split('?')[1]);
+                href = params.get('q') || href;
+              } catch (_) { /* ignore */ }
+            }
+            if (href && href.startsWith('http') && !href.includes('google.com/maps')) {
+              website = href;
+            }
+          }
+
+          // Fallback: aria-label containing "website"
+          if (!website) {
+            const allLinks = document.querySelectorAll('a[aria-label]');
+            for (const link of allLinks) {
+              const label = (link.getAttribute('aria-label') || '').toLowerCase();
+              if (label.includes('website') || label.includes('web site')) {
+                let href = link.href || '';
+                if (href.includes('google.com/url')) {
+                  try {
+                    const params = new URLSearchParams(href.split('?')[1]);
+                    href = params.get('q') || href;
+                  } catch (_) { /* ignore */ }
+                }
+                if (href && href.startsWith('http') && !href.includes('google.com/maps')) {
+                  website = href;
+                  break;
+                }
+              }
+            }
+          }
+
+          // --- Phone (bonus: extract if not found from list) ---
+          const phoneEl = document.querySelector(
+            'button[data-item-id^="phone:tel:"], a[data-item-id^="phone:tel:"]'
+          );
+          if (phoneEl) {
+            const itemId = phoneEl.getAttribute('data-item-id') || '';
+            const match = itemId.match(/phone:tel:(.+)/);
+            if (match) phone = match[1];
+          }
+
+          return { website, phone };
+        });
+
+        if (details.website) {
+          lead.website = details.website;
+          lead.hasWebsite = true;
+          enrichedCount++;
+          console.log(`    ✅ Website: ${details.website}`);
+        } else {
+          console.log(`    ❌ No website listed`);
+        }
+
+        // Fill in phone if it was missing from the list view
+        if (details.phone && !lead.phone) {
+          lead.phone = this.cleanPhoneNumber(details.phone);
+          console.log(`    📞 Phone: ${lead.phone}`);
+        }
+
+        // Navigate back to the list view
+        const wentBack = await page.evaluate(() => {
+          const backBtn = document.querySelector(
+            'button[aria-label="Back"], button[jsaction*="pane.action.back"]'
+          );
+          if (backBtn) { backBtn.click(); return true; }
+          return false;
+        });
+
+        if (!wentBack) {
+          await page.goBack().catch(() => {});
+        }
+
+        // Wait for list view to re-render
+        await this.delay(2000);
+
+      } catch (error) {
+        console.log(`    ⚠️  Error: ${error.message}`);
+        // Attempt recovery: go back to list
+        try {
+          await page.evaluate(() => {
+            const b = document.querySelector('button[aria-label="Back"]');
+            if (b) b.click();
+          });
+          await this.delay(1500);
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    if (alreadyHadWebsite > 0) {
+      console.log(`  ℹ️  ${alreadyHadWebsite} leads already had websites from list view`);
+    }
+    console.log(`🌐 Enrichment complete: ${enrichedCount}/${leads.length} leads have websites\n`);
+    return leads;
   }
 
   async scrapeYellowPages(searchQuery, location = "Islamabad") {
