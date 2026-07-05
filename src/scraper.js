@@ -470,78 +470,57 @@ class BusinessScraper {
   }
 
   /**
-   * Clicks each business card to open its detail panel and extract the website URL.
-   * Google Maps only shows website links in the detail view, not in list cards.
+   * Opens each lead's Google Maps place page in a new tab to extract its website URL.
+   * List-view cards don't contain website links; they only appear on the detail page.
+   * Using separate tabs avoids virtual-scrolling issues in the list panel.
    */
   async enrichLeadsWithWebsites(page, leads) {
-    console.log(`\n🌐 Enriching ${leads.length} leads with website data from detail panels...`);
+    console.log(`\n🌐 Enriching ${leads.length} leads with website data (new-tab method)...`);
 
     let enrichedCount = 0;
-    let alreadyHadWebsite = 0;
+    let alreadyHad = 0;
+    let noLink = 0;
 
     for (let i = 0; i < leads.length; i++) {
       const lead = leads[i];
 
       // Skip if lead already has a valid website
       if (lead.website && lead.website.trim() !== '' && lead.website !== 'N/A') {
-        alreadyHadWebsite++;
+        alreadyHad++;
         enrichedCount++;
         continue;
       }
 
+      // Build the URL for the business detail page
+      let detailUrl = lead.referenceLink;
+      if (!detailUrl) {
+        // Fallback: construct a Maps search URL from the business name
+        detailUrl = `https://www.google.com/maps/search/${encodeURIComponent(lead.name + ' ' + (lead.address || ''))}`;
+        noLink++;
+      }
+
+      let detailPage = null;
       try {
-        console.log(`  🔍 [${i + 1}/${leads.length}] Clicking "${lead.name}" for website...`);
+        console.log(`  🔍 [${i + 1}/${leads.length}] "${lead.name}"...`);
 
-        // Find the matching card by name and click it
-        const clicked = await page.evaluate((targetName, cardSelectors) => {
-          const cards = [];
-          const seen = new Set();
-          for (const selector of cardSelectors) {
-            document.querySelectorAll(selector).forEach(card => {
-              if (!seen.has(card)) {
-                seen.add(card);
-                cards.push(card);
-              }
-            });
-          }
-
-          for (const card of cards) {
-            const nameEl = card.querySelector(
-              '.qBF1Pd.fontHeadlineSmall, .qBF1Pd, .fontHeadlineSmall, [role="heading"]'
-            );
-            const ariaLabel =
-              card.querySelector('a[aria-label]')?.getAttribute('aria-label') || '';
-            const cardName = nameEl ? nameEl.textContent.trim() : ariaLabel.trim();
-
-            if (cardName === targetName) {
-              const clickable =
-                card.querySelector('a[href*="/maps/place/"]') || nameEl || card;
-              clickable.click();
-              return true;
-            }
-          }
-          return false;
-        }, lead.name, GOOGLE_MAPS_CARD_SELECTORS);
-
-        if (!clicked) {
-          console.log(`    ⚠️  Card not found, skipping`);
-          continue;
-        }
-
-        // Wait for detail panel to load
+        // Open a fresh tab for the business detail page
+        detailPage = await this.browser.newPage();
+        await detailPage.setUserAgent(
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        );
+        await detailPage.goto(detailUrl, { waitUntil: 'networkidle2', timeout: 20000 });
         await this.delay(3000);
 
-        // Extract website (and phone) from the detail panel
-        const details = await page.evaluate(() => {
+        // Extract website (and phone) from the detail page
+        const details = await detailPage.evaluate(() => {
           let website = '';
           let phone = '';
 
           // --- Website ---
-          // Primary: data-item-id="authority" is Google's internal attribute for website links
+          // Primary selector: Google uses data-item-id="authority" for website links
           const authorityEl = document.querySelector('a[data-item-id="authority"]');
           if (authorityEl) {
             let href = authorityEl.href || '';
-            // Unwrap Google redirect URLs
             if (href.includes('google.com/url')) {
               try {
                 const params = new URLSearchParams(href.split('?')[1]);
@@ -553,7 +532,7 @@ class BusinessScraper {
             }
           }
 
-          // Fallback: aria-label containing "website"
+          // Fallback: any link whose aria-label mentions "website"
           if (!website) {
             const allLinks = document.querySelectorAll('a[aria-label]');
             for (const link of allLinks) {
@@ -574,7 +553,22 @@ class BusinessScraper {
             }
           }
 
-          // --- Phone (bonus: extract if not found from list) ---
+          // Fallback 2: look for links in the info section with external URLs
+          if (!website) {
+            const infoButtons = document.querySelectorAll('a[data-item-id], button[data-item-id]');
+            for (const btn of infoButtons) {
+              const itemId = btn.getAttribute('data-item-id') || '';
+              if (itemId === 'authority' || itemId.startsWith('authority')) {
+                const href = btn.href || btn.getAttribute('data-url') || '';
+                if (href && href.startsWith('http') && !href.includes('google.com/maps')) {
+                  website = href;
+                  break;
+                }
+              }
+            }
+          }
+
+          // --- Phone ---
           const phoneEl = document.querySelector(
             'button[data-item-id^="phone:tel:"], a[data-item-id^="phone:tel:"]'
           );
@@ -591,49 +585,29 @@ class BusinessScraper {
           lead.website = details.website;
           lead.hasWebsite = true;
           enrichedCount++;
-          console.log(`    ✅ Website: ${details.website}`);
+          console.log(`    ✅ ${details.website}`);
         } else {
-          console.log(`    ❌ No website listed`);
+          console.log(`    ❌ No website listed for this business`);
         }
 
-        // Fill in phone if it was missing from the list view
+        // Fill in phone if missing from the list view
         if (details.phone && !lead.phone) {
           lead.phone = this.cleanPhoneNumber(details.phone);
-          console.log(`    📞 Phone: ${lead.phone}`);
+          console.log(`    📞 ${lead.phone}`);
         }
-
-        // Navigate back to the list view
-        const wentBack = await page.evaluate(() => {
-          const backBtn = document.querySelector(
-            'button[aria-label="Back"], button[jsaction*="pane.action.back"]'
-          );
-          if (backBtn) { backBtn.click(); return true; }
-          return false;
-        });
-
-        if (!wentBack) {
-          await page.goBack().catch(() => {});
-        }
-
-        // Wait for list view to re-render
-        await this.delay(2000);
 
       } catch (error) {
-        console.log(`    ⚠️  Error: ${error.message}`);
-        // Attempt recovery: go back to list
-        try {
-          await page.evaluate(() => {
-            const b = document.querySelector('button[aria-label="Back"]');
-            if (b) b.click();
-          });
-          await this.delay(1500);
-        } catch (_) { /* ignore */ }
+        console.log(`    ⚠️ ${error.message}`);
+      } finally {
+        // Always close the detail tab to free resources
+        if (detailPage) {
+          try { await detailPage.close(); } catch (_) { /* ignore */ }
+        }
       }
     }
 
-    if (alreadyHadWebsite > 0) {
-      console.log(`  ℹ️  ${alreadyHadWebsite} leads already had websites from list view`);
-    }
+    if (alreadyHad > 0) console.log(`  ℹ️  ${alreadyHad} leads already had websites from list view`);
+    if (noLink > 0) console.log(`  ℹ️  ${noLink} leads had no reference link, used name search`);
     console.log(`🌐 Enrichment complete: ${enrichedCount}/${leads.length} leads have websites\n`);
     return leads;
   }
